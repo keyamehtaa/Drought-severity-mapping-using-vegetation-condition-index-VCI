@@ -1,0 +1,108 @@
+var districts = ee.FeatureCollection("FAO/GAUL/2015/level2");
+
+var jaisalmer = districts.filter(ee.Filter.and(
+  ee.Filter.eq('ADM1_NAME', 'Rajasthan'),
+  ee.Filter.eq('ADM2_NAME', 'Jaisalmer')
+));
+
+Map.centerObject(jaisalmer, 7);
+Map.addLayer(jaisalmer, {}, "Jaisalmer");
+
+var ndvi = ee.ImageCollection("MODIS/006/MOD13Q1")
+  .filterBounds(jaisalmer)
+  .filterDate('2015-01-01', '2024-12-31')
+  .select(['NDVI'])
+  .map(function(img) {
+    return img.multiply(0.0001).copyProperties(img, img.propertyNames());
+  });
+
+
+var ndviMin = ndvi.reduce(ee.Reducer.min());
+var ndviMax = ndvi.reduce(ee.Reducer.max());
+
+
+var currentNDVI = ndvi
+  .filterDate('2022-01-01', '2022-12-31') 
+  .mean()
+  .rename('NDVI');  
+
+print("Current NDVI:", currentNDVI);
+
+
+var vci = currentNDVI.subtract(ndviMin)
+  .divide(ndviMax.subtract(ndviMin))
+  .multiply(100)
+  .clip(jaisalmer);
+  
+print(ndvi.size());
+
+
+var palette = ['red','orange','yellow','green','darkgreen'];
+
+Map.addLayer(vci, {min: 0, max: 100, palette: palette}, 'VCI Jaisalmer');
+
+var stats = vci.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: jaisalmer,
+  scale: 250,
+  maxPixels: 1e13
+});
+
+print(stats);
+
+
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+var legendTitle = ui.Label({
+  value: 'VCI Legend',
+  style: {fontWeight: 'bold', fontSize: '14px'}
+});
+legend.add(legendTitle);
+
+var palette = ['red','orange','yellow','green','darkgreen'];
+var names = [
+  'Severe drought',
+  'Moderate drought',
+  'Mild stress',
+  'Normal vegetation',
+  'Healthy vegetation'
+];
+
+
+for (var i = 0; i < palette.length; i++) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: palette[i],
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+
+  var description = ui.Label({
+    value: names[i],
+    style: {margin: '0 0 4px 6px'}
+  });
+
+  var row = ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+
+  legend.add(row);
+}
+
+
+Map.add(legend);
+
+Export.image.toDrive({
+  image: vci,
+  description: 'VCI_Jaisalmer',
+  scale: 500,
+  region: jaisalmer,
+  fileFormat: 'GeoTIFF'
+});
